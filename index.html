@@ -88,6 +88,16 @@ input:focus{border-color:var(--gold);box-shadow:0 0 0 3px #e9bd621c}
 .vote-timer{display:inline-flex;align-items:center;gap:7px;border:1px solid #92713c;background:#211d19;color:var(--gold2);border-radius:99px;padding:7px 11px;font-size:12px;font-weight:850;font-variant-numeric:tabular-nums;letter-spacing:.06em;margin-top:10px}.vote-timer.urgent{color:#ff9a9a;border-color:#87505a;background:#301d24}
 .dot{width:7px;height:7px;border-radius:50%;background:#858b9d}
 .dot.on{background:var(--green);box-shadow:0 0 12px #7ed6a4aa}
+.presence-panel{margin-top:18px;padding:15px;background:#101421;border:1px solid var(--line);border-radius:13px}
+.presence-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;letter-spacing:.08em}
+.presence-help{margin:7px 0 12px;color:var(--muted);font-size:11px}
+.presence-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.presence-player{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 11px;background:#151a28;border:1px solid #30364b;border-radius:10px;font-size:12px}
+.presence-name{display:flex;align-items:center;gap:8px;min-width:0}
+.presence-name span:last-child{overflow-wrap:anywhere}
+.presence-status{font-size:10px;color:var(--muted)}
+.presence-status.online{color:var(--green)}
+@media(max-width:560px){.presence-list{grid-template-columns:1fr}}
 .result-row{display:flex;align-items:center;gap:12px;padding:13px;background:#101421;border:1px solid var(--line);border-radius:12px;margin:8px 0}
 .rank{width:28px;height:28px;border-radius:9px;display:grid;place-items:center;background:#292b38;color:var(--gold);font-weight:800}
 .result-row:first-child .rank{background:#5a4523;color:#ffe4a5}
@@ -194,6 +204,11 @@ input:focus{border-color:var(--gold);box-shadow:0 0 0 3px #e9bd621c}
     <button id="resetBtn" class="btn btn-danger">ERASE RESULTS &amp; START NEW ROUND</button>
    </div>
    <div id="hostMessage" class="notice"></div>
+   <div class="presence-panel">
+    <div class="presence-heading"><strong>PLAYER ACTIVITY</strong><span id="onlineCount" class="pill">0 / 9 ONLINE</span></div>
+    <p class="presence-help">Live status of players who have entered the game.</p>
+    <div id="presenceList" class="presence-list" aria-live="polite"></div>
+   </div>
   </div>
 
   <div id="resultsPanel" class="card hidden" style="margin-top:16px">
@@ -317,12 +332,37 @@ input:focus{border-color:var(--gold);box-shadow:0 0 0 3px #e9bd621c}
    toast("The results have been revealed!");
   }
  }
+ function renderPresence(){
+  if(!profile?.is_host)return;
+  const onlineUsers=new Set();
+  const state=channel?.presenceState?.()||{};
+  Object.values(state).flat().forEach(meta=>{if(meta?.username)onlineUsers.add(meta.username);});
+  $("onlineCount").textContent=onlineUsers.size+" / "+players.length+" ONLINE";
+  const list=$("presenceList");list.innerHTML="";
+  players.forEach(player=>{
+   const online=onlineUsers.has(player.u);
+   const item=document.createElement("div");item.className="presence-player";
+   const name=document.createElement("div");name.className="presence-name";
+   const dot=document.createElement("span");dot.className="dot"+(online?" on":"");
+   const label=document.createElement("span");label.textContent=player.n+(player.u==="jerson"?" · Host":"");
+   name.append(dot,label);
+   const status=document.createElement("span");status.className="presence-status"+(online?" online":"");status.textContent=online?"ONLINE":"OFFLINE";
+   item.append(name,status);list.append(item);
+  });
+ }
  function subscribeRealtime(){
   if(channel)db.removeChannel(channel);
-  channel=db.channel("pyramid-game-live")
+  channel=db.channel("pyramid-game-live",{config:{presence:{key:profile.user_id}}})
    .on("postgres_changes",{event:"*",schema:"public",table:"game_state"},async()=>{try{await refreshAll();}catch(e){toast("Could not refresh game status.");}})
    .on("postgres_changes",{event:"*",schema:"public",table:"vote_tallies"},async()=>{if(gameState?.results_revealed){try{await renderResults();}catch(e){toast("Could not refresh results.");}}})
-   .subscribe();
+   .on("presence",{event:"sync"},()=>renderPresence())
+   .subscribe(async status=>{
+    if(status==="SUBSCRIBED"){
+     const {error}=await channel.track({user_id:profile.user_id,username:profile.username,display_name:profile.display_name,online_at:new Date().toISOString()});
+     if(error)toast("Could not publish your online status.");
+     renderPresence();
+    }
+   });
  }
  function renderChoices(){
   const box=$("playerChoices");box.innerHTML="";
@@ -450,6 +490,8 @@ input:focus{border-color:var(--gold);box-shadow:0 0 0 3px #e9bd621c}
  async function logout(){
   if(timerInterval){clearInterval(timerInterval);timerInterval=null;}
   if(channel){await db.removeChannel(channel);channel=null;}
+  if($("presenceList"))$("presenceList").innerHTML="";
+  if($("onlineCount"))$("onlineCount").textContent="0 / 9 ONLINE";
   await db.auth.signOut();current=null;profile=null;ownVote=null;selected.clear();$("username").value="";$("password").value="";$("rememberMe").checked=false;show("loginView");
  }
  $("togglePassword").addEventListener("click",()=>{
